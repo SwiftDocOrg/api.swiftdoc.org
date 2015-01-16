@@ -1,0 +1,22 @@
+{
+  "name": "api.swiftdoc.org",
+  "version": "0.0.1",
+  "description": "An API for accessing documentation from SwiftDoc.org.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "~4.9.x",
+    "lunr": "^0.5.7"
+  },
+  "engines": {
+    "node": "0.10.x"
+  },
+  "keywords": [
+    "swift",
+    "swiftdoc",
+    "api"
+  ],
+  "license": "MIT"
+}

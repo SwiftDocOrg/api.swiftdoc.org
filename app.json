@@ -1,0 +1,5 @@
+{
+  "name": "SwiftDoc.org API",
+  "description": "An API for accessing documentation from SwiftDoc.org.",
+  "keywords": ["swift", "swiftdoc", "api"]
+}
