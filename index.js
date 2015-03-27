@@ -1,16 +1,19 @@
+// modules
 var express = require('express'),
     fs = require('fs'),
     lunr = require('lunr');
 
+// data
+var pjson = require('./package.json'),
+    data = require('./swiftdoc.json');
+
 var indent = 4;
 var site_url = 'http://swiftdoc.org/';
-var api_url  = 'http://api.swiftdoc.org/';
-var data = JSON.parse(fs.readFileSync('swiftdoc.json', 'utf8'));
-
+var api_url  = 'http://api.swiftdoc.org';
 
 
 // -----------------------------------------------------------------------
-// Array extensions 
+// Type extensions 
 
 // returns a new array with only unique elements of the array
 Array.prototype.unique = function() {
@@ -26,26 +29,37 @@ Array.prototype.extend = function(arr) {
     return this;
 }
 
-
+// returns a new string with `pathComponent` added at the end, handling the slash in between
+String.prototype.addPathComponent = function(pathComponent) {
+    pathComponent = pathComponent.replace(/^\//, '');
+    if (this[this.length - 1] == '/') {
+        return this + pathComponent;
+    } else{
+        return this + '/' + pathComponent;
+    }
+}
 
 // -----------------------------------------------------------------------
 // Build indexes and item arrays
 
 // create the lunr search index
 var searchIndex = lunr(function () {
-    this.field('name', 100);
+    this.field('name', { boost: 100 });
     this.field('comment');
     this.ref('id');
 });
 
 // convert big data structure into a simple array
-var itemsAsArray = Object.keys(data.types)
+var typesAsArray = Object.keys(data.types)
                          .sort()
                          .map(function(el) { return data.types[el] });
+var itemsAsArray = typesAsArray.slice();
 itemsAsArray.extend(data.operators);
 itemsAsArray.extend(data.functions);
 itemsAsArray.extend(data.properties);
 itemsAsArray.extend(data.aliases);
+
+console.log(itemsAsArray);
 
 // create "documents" that can be indexed by lunr
 var itemCount = 0;
@@ -100,19 +114,27 @@ app.get('/*', function(req, res, next) {
 // provide list of API URLs for root request
 app.get('/', function(request, response) {
     var routes = {
-            'all_urls_url': 'http://api.swiftdoc.org/urls',
-            'search_url': 'http://api.swiftdoc.org/search?q={query}',
+            'all_urls_url': api_url.addPathComponent('urls'),
+            'api_urls_url': api_url.addPathComponent('api_urls'),
+            'search_url': api_url.addPathComponent('search?q={query}'),
+            'version_url': api_url.addPathComponent('version'),
         };
+    
     response.send(JSON.stringify(routes, null, indent));
 });
 
-// URLs for each item
+// URLs for each item at SwiftDoc.org
 app.get('/urls', function(request, response) {
-    var result = itemsAsArray.reduce(function (p, c) {
-        p[c.name] = site_url + pathForItem(c);
-        return p;
-    }, { });
-    response.send(JSON.stringify(result, null, indent));
+    var results = itemsAsArray.reduce(itemToTitleAndPath(site_url), { });
+    
+    response.send(JSON.stringify(results, null, indent));
+});
+
+// URLs for each item in API
+app.get('/api_urls', function(request, response) {
+    var results = itemsAsArray.reduce(itemToTitleAndPath(api_url), { });
+    
+    response.send(JSON.stringify(results, null, indent));
 });
 
 // search results
@@ -121,9 +143,9 @@ app.get('/search', function(request, response) {
         var doc = itemDocuments[result.ref];
         return {
             title: doc.title,
-            site_url: site_url + pathForItem(itemsAsArray[doc.index]),
-            // api_url: api_url + pathForItem(itemsAsArray[doc.index]),
-            // comment: doc.comment,
+            site_url: site_url.addPathComponent(pathForItem(itemsAsArray[doc.index])),
+            // api_url: api_url.addPathComponent(pathForItem(itemsAsArray[doc.index])),
+            comment: doc.comment,
             // score: result.score,
         };
     }).sort(function (a, b) {
@@ -135,6 +157,44 @@ app.get('/search', function(request, response) {
     response.send(JSON.stringify(results, null, indent));
 });
 
+// version for Swift and this API
+app.get('/version', function(request, response) {
+    var versions = data['version'];
+    versions['api'] = pjson['version'];
+
+    response.send(JSON.stringify(versions, null, indent));
+});
+
+app.get(/^\/(protocol|type)\/?$/, function(request, response) {
+    var isProtocol = request.params[0] == 'protocol';
+    var results = typesAsArray.filter(function(c) {
+        return isProtocol ^ (c.kind != 'protocol');
+    }).reduce(itemToTitleAndPath(api_url), { });
+    
+    response.send(JSON.stringify(results, null, indent));
+});
+
+app.get(/^\/(operator|func)\/?$/, function(request, response) {
+    var results = itemsAsArray.filter(function(c) {
+        return (c.kind == request.params[0]);
+    }).reduce(itemToTitleAndPath(api_url), { });
+    
+    response.send(JSON.stringify(request.params, null, indent));
+});
+
+app.get('/global', function(request, response) {
+    var results = itemsAsArray.filter(function(c) {
+        return ((c.kind == 'typealias') || (c.kind == 'var'));
+    }).reduce(itemToTitleAndPath(api_url), { });
+    
+    response.send(JSON.stringify(request.params, null, indent));
+});
+
+app.get(/^\/(protocol|type|operator|func|global)\/([^\/]*)\/?$/, function(request, response) {
+    response.send(JSON.stringify(request.params, null, indent));
+});
+
+
 // start server
 app.listen(app.get('port'), function() {
     console.log("SwiftDoc API is running at localhost:" + app.get('port'));
@@ -144,6 +204,14 @@ app.listen(app.get('port'), function() {
 
 // -----------------------------------------------------------------------
 // Utility functions
+
+function itemToTitleAndPath(pathPrefix) {
+    var process = function(aggregate, current) {
+        aggregate[current.name] = pathPrefix.addPathComponent(pathForItem(current));
+        return aggregate;
+    }
+    return process;
+}
 
 function pathForItem(item) {
     switch (item.kind) {
