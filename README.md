@@ -4,7 +4,20 @@
 
 The API can be found at [http://api.swiftdoc.org/](http://api.swiftdoc.org/). Please note that this API is looking for contributors and is not under active development at this time.
 
+## Installation
+
+This API is a Node.js Heroku application. With `npm` and the Heroku command line tools installed, you can install and run this API locally with the following commands:
+
+```
+git clone https://github.com/SwiftDocOrg/api.swiftdoc.org.git
+cd api.swiftdoc.org
+npm install
+heroku local
+```
+
 ## Contributions
+
+This project welcomes contributors! The API is not currently under development, so if you would like to work on it, please reach out. 
 
 Issues and pull requests should be filed in this repository for problems relating to the API itself.
 
