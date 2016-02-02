@@ -39,6 +39,31 @@ String.prototype.addPathComponent = function(pathComponent) {
     }
 }
 
+// Array.find polyfill
+if (!Array.prototype.find) {
+  Array.prototype.find = function(predicate) {
+    if (this === null) {
+      throw new TypeError('Array.prototype.find called on null or undefined');
+    }
+    if (typeof predicate !== 'function') {
+      throw new TypeError('predicate must be a function');
+    }
+    var list = Object(this);
+    var length = list.length >>> 0;
+    var thisArg = arguments[1];
+    var value;
+
+    for (var i = 0; i < length; i++) {
+      value = list[i];
+      if (predicate.call(thisArg, value, i, list)) {
+        return value;
+      }
+    }
+    return undefined;
+  };
+}
+
+
 // -----------------------------------------------------------------------
 // Build indexes and item arrays
 
@@ -59,8 +84,6 @@ itemsAsArray.extend(data.functions);
 itemsAsArray.extend(data.properties);
 itemsAsArray.extend(data.aliases);
 
-console.log(itemsAsArray);
-
 // create "documents" that can be indexed by lunr
 var itemCount = 0;
 var itemDocuments = itemsAsArray.reduce(function (memo, item, index) {
@@ -78,8 +101,8 @@ var itemDocuments = itemsAsArray.reduce(function (memo, item, index) {
             item[section].forEach(function(subitem) {
                 memo.push({
                     id: itemCount++,
-                    name: item.name || item.kind,
-                    comment: item.comment,
+                    name: subitem.name || subitem.kind,
+                    comment: subitem.comment,
                     title: titleForItem(subitem, item.name),
                     index: index,
                 });
@@ -106,9 +129,10 @@ app.set('port', (process.env.PORT || 5000));
 app.use(express.static(__dirname + '/public'));
 
 // set MIME type for all responses
-app.get('/*', function(req, res, next) {
-  res.contentType('application/json');
-  next();
+app.get('/*', function(request, response, next) {
+    api_url = 'http://' + request.headers.host;
+    response.contentType('application/json');
+    next();
 });
 
 // provide list of API URLs for root request
@@ -132,7 +156,7 @@ app.get('/urls', function(request, response) {
 
 // URLs for each item in API
 app.get('/api_urls', function(request, response) {
-    var results = itemsAsArray.reduce(itemToTitleAndPath(api_url), { });
+    var results = itemsAsArray.reduce(apiItemToTitleAndPath(api_url), { });
     
     response.send(JSON.stringify(results, null, indent));
 });
@@ -144,7 +168,7 @@ app.get('/search', function(request, response) {
         return {
             title: doc.title,
             site_url: site_url.addPathComponent(pathForItem(itemsAsArray[doc.index])),
-            // api_url: api_url.addPathComponent(pathForItem(itemsAsArray[doc.index])),
+            api_url: api_url.addPathComponent(apiPathForItem(itemsAsArray[doc.index])),
             comment: doc.comment,
             // score: result.score,
         };
@@ -165,6 +189,7 @@ app.get('/version', function(request, response) {
     response.send(JSON.stringify(versions, null, indent));
 });
 
+// list of protocols and types only
 app.get(/^\/(protocol|type)\/?$/, function(request, response) {
     var isProtocol = request.params[0] == 'protocol';
     var results = typesAsArray.filter(function(c) {
@@ -174,6 +199,7 @@ app.get(/^\/(protocol|type)\/?$/, function(request, response) {
     response.send(JSON.stringify(results, null, indent));
 });
 
+// list of operators or global functions only
 app.get(/^\/(operator|func)\/?$/, function(request, response) {
     var results = itemsAsArray.filter(function(c) {
         return (c.kind == request.params[0]);
@@ -182,6 +208,7 @@ app.get(/^\/(operator|func)\/?$/, function(request, response) {
     response.send(JSON.stringify(request.params, null, indent));
 });
 
+// list of global declarations (typealiases, basically)
 app.get('/global', function(request, response) {
     var results = itemsAsArray.filter(function(c) {
         return ((c.kind == 'typealias') || (c.kind == 'var'));
@@ -190,20 +217,68 @@ app.get('/global', function(request, response) {
     response.send(JSON.stringify(request.params, null, indent));
 });
 
+// handle request for a specific item
 app.get(/^\/(protocol|type|operator|func|global)\/([^\/]*)\/?$/, function(request, response) {
-    response.send(JSON.stringify(request.params, null, indent));
+    var result;
+    
+    switch (request.params[0]) {
+        case 'protocol':
+        case 'type':
+            result = data.types[request.params[1]];
+            break;
+    
+        case 'operator':
+            result = data.operators.find(function(element) {
+                return element.slug == request.params[1];
+            });
+            break;
+    
+        case 'func':
+            result = data.functions.filter(function(element) {
+                return element.name == request.params[1];
+            });
+            break;
+            
+        case 'global':
+            result = data.aliases.find(function(element) {
+                return element.name == request.params[1];
+            });
+            break;
+            
+    }
+    if (result) {
+        response.send(JSON.stringify(result, null, indent));
+    } else {
+        response.send(JSON.stringify({ "error": "no match", "request": request.params }, null, indent));
+    }
 });
 
 
 // start server
 app.listen(app.get('port'), function() {
-    console.log("SwiftDoc API is running at localhost:" + app.get('port'));
+    console.log("SwiftDoc API is running on port: " + app.get('port'));
 });
 
 
 
 // -----------------------------------------------------------------------
 // Utility functions
+
+function apiPathForItem(item) {
+    // slight tweak: global type aliases are all on one page on SwiftDoc.org
+    // but are their own results in the API, so get the path but delete
+    // the aliases part
+    var result = pathForItem(item);
+    return result.replace('/aliases/#', '/');
+}
+
+function apiItemToTitleAndPath(pathPrefix) {
+    var process = function(aggregate, current) {
+        aggregate[current.name] = pathPrefix.addPathComponent(apiPathForItem(current));
+        return aggregate;
+    }
+    return process;
+}
 
 function itemToTitleAndPath(pathPrefix) {
     var process = function(aggregate, current) {
@@ -226,9 +301,7 @@ function pathForItem(item) {
         case 'func':
             return 'func/' + item.slug + '/';
         case 'typealias':
-            return 'global/alias/';
-        case 'var':
-            return 'global/var/';
+            return 'global/aliases/#' + item.name;
         default:
             return '/404/';
     }
